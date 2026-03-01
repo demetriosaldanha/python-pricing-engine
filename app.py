@@ -138,23 +138,30 @@ if mode == "Quick Structural Simulation":
 
                 friendly_regime = regime_map.get(result["regime"], result["regime"])
 
-                st.markdown(f"**Regime:** {friendly_regime}")
+                if result["regime"] == "bundle_dominates":
+                    st.success(f"Regime: {friendly_regime}")
+                elif result["regime"] == "separate_dominates":
+                    st.info(f"Regime: {friendly_regime}")
+                else:
+                    st.warning(f"Regime: {friendly_regime}")
 
             with col2:
 
-                fig, ax = plt.subplots(figsize=(10, 6))
+                fig, ax = plt.subplots(figsize=(8, 4.5))
 
-                # Dark background
                 fig.patch.set_facecolor("#0E1117")
                 ax.set_facecolor("#0E1117")
 
-                # Cores modernas dark-friendly
-                color_separate = "#4DA3FF"   # azul vibrante
-                color_bundle = "#2ECC71"     # verde moderno
+                color_separate = "#4DA3FF"
+                color_bundle = "#2ECC71"
 
+                separate_curve = result["profit_separate_curve"]
+                bundle_curve = result["profit_bundle_curve"]
+
+                # Curvas
                 ax.plot(
                     prices,
-                    result["profit_separate_curve"],
+                    separate_curve,
                     label="Separate Profit",
                     color=color_separate,
                     linewidth=2.5
@@ -162,57 +169,100 @@ if mode == "Quick Structural Simulation":
 
                 ax.plot(
                     prices,
-                    result["profit_bundle_curve"],
+                    bundle_curve,
                     label="Bundle Profit",
                     color=color_bundle,
                     linewidth=2.5
                 )
 
-                # Linha vertical no preço ótimo
-                optimal_bundle_price = result["bundle_price"]
-                optimal_bundle_profit = result["bundle_profit"]
+                # ==============================
+                # Pico Separate
+                # ==============================
 
-                ax.axvline(
-                    optimal_bundle_price,
-                    linestyle="--",
-                    alpha=0.5,
-                    color="#AAAAAA"
-                )
+                sep_idx = np.argmax(separate_curve)
+                sep_price = prices[sep_idx]
+                sep_profit = separate_curve[sep_idx]
 
-                # Ponto ótimo destacado
                 ax.scatter(
-                    optimal_bundle_price,
-                    optimal_bundle_profit,
-                    color="#FFFFFF",
-                    s=120,
+                    sep_price,
+                    sep_profit,
+                    color=color_separate,
+                    s=90,
                     zorder=5
                 )
 
-                # Label somente do ponto ótimo
                 ax.annotate(
-                    f"{optimal_bundle_price:.2f}",
-                    (optimal_bundle_price, optimal_bundle_profit),
+                    f"${sep_price:,.2f}",
+                    (sep_price, sep_profit),
                     textcoords="offset points",
                     xytext=(0, 10),
                     ha='center',
-                    color="white",
-                    fontsize=10,
+                    color=color_separate,
+                    fontsize=9,
                     fontweight="bold"
                 )
 
-                ax.set_title("Profit Comparison", color="white", fontsize=14)
+                # ==============================
+                # Pico Bundle
+                # ==============================
+
+                bun_idx = np.argmax(bundle_curve)
+                bun_price = prices[bun_idx]
+                bun_profit = bundle_curve[bun_idx]
+
+                ax.scatter(
+                    bun_price,
+                    bun_profit,
+                    color=color_bundle,
+                    s=90,
+                    zorder=5
+                )
+
+                ax.annotate(
+                    f"${bun_price:,.2f}",
+                    (bun_price, bun_profit),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha='center',
+                    color=color_bundle,
+                    fontsize=9,
+                    fontweight="bold"
+                )
+
+                # Linha vertical no bundle (mantemos para referência)
+                ax.axvline(
+                    bun_price,
+                    linestyle="--",
+                    alpha=0.4,
+                    color="#AAAAAA"
+                )
+
+                # ==============================
+                # Estética consistente
+                # ==============================
+
                 ax.set_xlabel("Price", color="white")
                 ax.set_ylabel("Profit", color="white")
+                ax.tick_params(colors="white")
 
-                ax.tick_params(colors='white')
-                ax.legend(facecolor="#0E1117", edgecolor="white", labelcolor="white")
+                ax.yaxis.set_major_formatter(
+                    FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                )
+
+                ax.xaxis.set_major_formatter(
+                    FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                )
+
+                ax.legend(
+                    facecolor="#0E1117",
+                    edgecolor="white",
+                    labelcolor="white"
+                )
 
                 ax.spines["bottom"].set_color("white")
-                ax.spines["top"].set_color("white")
                 ax.spines["left"].set_color("white")
-                ax.spines["right"].set_color("white")
 
-                st.pyplot(fig)
+                st.pyplot(fig, use_container_width=False)
 
 
 # =====================================================
@@ -220,7 +270,45 @@ if mode == "Quick Structural Simulation":
 # =====================================================
 
 if mode == "Upload Dataset (Econometric Estimation)":
+# =====================================================
+# TEMPLATE DOWNLOAD SECTION
+# =====================================================
 
+    st.markdown("## 📥 Download Data Template")
+
+    template_df = pd.DataFrame({
+        "product_id": ["A", "A", "B", "B"],
+        "product_name": ["Product A", "Product A", "Product B", "Product B"],
+        "price": [150, 160, 180, 170],
+        "quantity": [100, 95, 80, 85],
+        "cac": [20, 22, 25, 24],
+        "promotion_flag": [0, 1, 0, 1],
+        "month": ["2024-01", "2024-02", "2024-01", "2024-02"]
+    })
+
+    csv_template = template_df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="Download CSV Template",
+        data=csv_template,
+        file_name="pricing_optimizer_template.csv",
+        mime="text/csv"
+    )
+
+    st.markdown(
+        """
+        **Required Columns Explanation:**
+        
+        - `product_id`: Unique identifier for each product  
+        - `price`: Selling price  
+        - `quantity`: Units sold  
+        - `cac`: Customer acquisition cost  
+        - `promotion_flag`: 1 if promotion active, 0 otherwise  
+        - `month`: Time period (YYYY-MM format recommended)
+        """
+    )
+
+    st.markdown("---")
     uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
     if uploaded_file is not None:
@@ -229,6 +317,7 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
         required_cols = [
             "product_id",
+            "product_name",
             "price",
             "quantity",
             "cac",
@@ -515,6 +604,10 @@ if mode == "Upload Dataset (Econometric Estimation)":
                     ax.tick_params(colors="white")
 
                     ax.yaxis.set_major_formatter(
+                        FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                    )
+
+                    ax.xaxis.set_major_formatter(
                         FuncFormatter(lambda x, pos: f"${x:,.0f}")
                     )
 
