@@ -44,227 +44,309 @@ mode = st.sidebar.radio(
 )
 
 # =====================================================
-# MODE 1 — QUICK STRUCTURAL SIMULATION
+# MODE 1 — QUICK STRUCTURAL SIMULATION (REFATORADO)
 # =====================================================
 
 if mode == "Quick Structural Simulation":
 
-    # limpa resultado se trocar de modo
     if "result" not in st.session_state:
         st.session_state["result"] = None
         st.session_state["prices"] = None
 
-    st.sidebar.header("Product Parameters")
+    st.sidebar.header("Quick Simulation Setup")
 
-    st.sidebar.subheader("Product A")
-    mean_price_A = st.sidebar.number_input("Mean Price", value=150.0)
-    elasticity_A = st.sidebar.number_input("Elasticity", value=-1.5)
-    cost_A = st.sidebar.number_input("Cost", value=60.0)
+    # ==============================
+    # Número de Produtos
+    # ==============================
 
-    st.sidebar.subheader("Product B")
-    mean_price_B = st.sidebar.number_input("Mean Price", value=180.0)
-    elasticity_B = st.sidebar.number_input("Elasticity", value=-2.0)
-    cost_B = st.sidebar.number_input("Cost B", value=50.0)
+    num_products = st.sidebar.number_input(
+        "Number of Products",
+        min_value=1,
+        max_value=5,
+        value=2,
+        step=1
+    )
+
+    wtp_dict = {}
+    cost_dict = {}
+    market_size_dict = {}
+    for i in range(num_products):
+
+        st.sidebar.subheader(f"Product {i+1}")
+
+        mean_price = st.sidebar.number_input(
+            "Mean Price",
+            value=150.0 + (i * 20),
+            key=f"mean_price_{i}"
+        )
+
+        elasticity = st.sidebar.number_input(
+            "Elasticity",
+            value=-1.5,
+            key=f"elasticity_{i}"
+        )
+
+        cost = st.sidebar.number_input(
+            "Cost",
+            value=60.0,
+            key=f"cost_{i}"
+        )
+        market_size = st.sidebar.slider(
+            "Addressable Market",
+            min_value=1_000,
+            max_value=10_000_000,
+            value=100_000,
+            step=10_000,
+            key=f"tam_{i}"
+        )
+
+        st.sidebar.markdown(
+            f"<div style='font-size:14px; color:#BBBBBB;'>"
+            f"Selected TAM: <b>{market_size:,.0f}</b> consumers"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        mu, sigma = calibrate_wtp_distribution(mean_price, elasticity)
+        wtp = generate_calibrated_population(mu, sigma)
+
+        product_id = f"P{i+1}"
+
+        wtp_dict[product_id] = wtp
+        cost_dict[product_id] = cost
+        market_size_dict[product_id] = market_size
+
+    # ==============================
+    # Bundle Option
+    # ==============================
+
+    bundle_enabled = st.sidebar.checkbox("Enable Bundle Analysis")
+
+    bundle_products = None
+
+    if bundle_enabled and num_products >= 2:
+        bundle_products = st.sidebar.multiselect(
+            "Select Products for Bundle",
+            list(wtp_dict.keys()),
+            default=list(wtp_dict.keys())[:2]
+        )
+
+        if len(bundle_products) < 2:
+            st.sidebar.warning("Select at least 2 products for bundle.")
+            bundle_products = None
+
+    # ==============================
+    # Run Simulation
+    # ==============================
 
     if st.button("Run Simulation"):
 
-        mu_A, sigma_A = calibrate_wtp_distribution(mean_price_A, elasticity_A)
-        mu_B, sigma_B = calibrate_wtp_distribution(mean_price_B, elasticity_B)
+        min_price = min([150.0]) * 0.3
+        max_price = max([150.0 + (num_products * 20)]) * 2.5
+        mean_prices = [
+            st.session_state.get(f"mean_price_{i}", 150.0)
+            for i in range(num_products)
+        ]
 
-        wtp_A = generate_calibrated_population(mu_A, sigma_A)
-        wtp_B = generate_calibrated_population(mu_B, sigma_B)
+        costs = [
+            st.session_state.get(f"cost_{i}", 60.0)
+            for i in range(num_products)
+        ]
 
-        prices = np.linspace(50, 400, 200)
+        min_reference = min(min(mean_prices), min(costs))
+        max_reference = max(max(mean_prices), max(costs))
+
+        min_price = max(1, min_reference * 0.1)
+        max_price = max_reference * 3
+
+        prices = np.linspace(min_price, max_price, 400)
 
         result = enterprise_market_strategy(
-            wtp_A,
-            wtp_B,
-            cost_A,
-            cost_B,
-            prices
+            wtp_dict,
+            cost_dict,
+            prices,
+            market_size_dict=market_size_dict,
+            bundle_products=bundle_products
         )
 
         st.session_state["result"] = result
         st.session_state["prices"] = prices
 
-    # ===== Renderização segura =====
+    # =====================================================
+    # RENDER RESULTS
+    # =====================================================
 
     if st.session_state.get("result") is not None:
 
         result = st.session_state["result"]
         prices = st.session_state["prices"]
 
-        # segurança extra
-        required_keys = [
-            "optimal_A_price",
-            "optimal_B_price",
-            "bundle_price",
-            "separate_profit",
-            "bundle_profit",
-            "profit_separate_curve",
-            "profit_bundle_curve"
-        ]
+        col1, col2 = st.columns([1.2, 2])
 
-        if not all(k in result for k in required_keys):
-            st.error("Strategy engine is not returning all required fields.")
-        else:
+        # ==============================
+        # LEFT COLUMN (Metrics)
+        # ==============================
 
-            col1, col2 = st.columns([1.2, 2])
+        with col1:
 
-            with col1:
-                st.subheader("Optimal Strategy")
+            st.subheader("Strategy Recommendation")
 
-                m1, m2 = st.columns(2)
-                m3, m4 = st.columns(2)
-                m5, m6 = st.columns(2)
+            # INDIVIDUAL PRODUCTS
+            for product_id, data in result["individual"].items():
+                st.markdown(f"### {product_id}")
+                st.metric(
+                    "Optimal Price",
+                    f"${data['optimal_price']:,.2f}"
+                )
+                st.metric(
+                    "Optimal Profit",
+                    f"${data['optimal_profit']:,.2f}"
+                )
+                st.markdown("---")
 
-                m1.metric("Optimal Price A", f"${result['optimal_A_price']:,.2f}")
-                m2.metric("Optimal Price B", f"${result['optimal_B_price']:,.2f}")
+            # BUNDLE
+            if result["bundle"]["enabled"]:
 
-                m3.metric("Bundle Price", f"${result['bundle_price']:,.2f}")
-                m4.metric("Separate Profit", f"${result['separate_profit']:,.2f}")
+                st.markdown("### Bundle")
 
-                m5.metric("Bundle Profit", f"${result['bundle_profit']:,.2f}")
+                st.metric(
+                    "Bundle Optimal Price",
+                    f"${result['bundle']['optimal_price']:,.2f}"
+                )
 
-                gain = result["bundle_profit"] - result["separate_profit"]
-                m6.metric("Incremental Gain", f"${gain:,.2f}")
+                st.metric(
+                    "Bundle Profit",
+                    f"${result['bundle']['optimal_profit']:,.2f}"
+                )
 
-                # Regime amigável
-                regime_map = {
-                    "bundle_dominates": "Bundle Dominates",
-                    "separate_dominates": "Separate Pricing Dominates",
-                    "indifferent": "Indifferent Strategy"
-                }
+                st.metric(
+                    "Incremental Gain",
+                    f"${result['bundle']['incremental_gain']:,.2f}"
+                )
 
-                friendly_regime = regime_map.get(result["regime"], result["regime"])
+            # REGIME
+            regime = result["regime"]
 
-                if result["regime"] == "bundle_dominates":
-                    st.success(f"Regime: {friendly_regime}")
-                elif result["regime"] == "separate_dominates":
-                    st.info(f"Regime: {friendly_regime}")
-                else:
-                    st.warning(f"Regime: {friendly_regime}")
+            regime_map = {
+                "bundle_dominates": "Bundle Dominates",
+                "separate_dominates": "Separate Pricing Dominates",
+                "single_product": "Single Product Analysis"
+            }
 
-            with col2:
+        # ==============================
+        # RIGHT COLUMN (Chart)
+        # ==============================
 
-                fig, ax = plt.subplots(figsize=(8, 4.5))
+        with col2:
 
-                fig.patch.set_facecolor("#0E1117")
-                ax.set_facecolor("#0E1117")
+            fig, ax = plt.subplots(figsize=(8, 4.5))
 
-                color_separate = "#4DA3FF"
-                color_bundle = "#2ECC71"
+            fig.patch.set_facecolor("#0E1117")
+            ax.set_facecolor("#0E1117")
 
-                separate_curve = result["profit_separate_curve"]
-                bundle_curve = result["profit_bundle_curve"]
+            colors = ["#4DA3FF", "#2ECC71", "#E74C3C", "#9B59B6", "#F1C40F"]
 
-                # Curvas
+            # INDIVIDUAL CURVES
+            for idx, (product_id, data) in enumerate(result["individual"].items()):
+
+                curve = data["profit_curve"]
+
                 ax.plot(
                     prices,
-                    separate_curve,
-                    label="Separate Profit",
-                    color=color_separate,
-                    linewidth=2.5
+                    curve,
+                    label=f"{product_id} Profit",
+                    color=colors[idx % len(colors)],
+                    linewidth=2.2
                 )
+
+                opt_price = data["optimal_price"]
+                opt_profit = data["optimal_profit"]
+
+                ax.scatter(
+                    opt_price,
+                    opt_profit,
+                    color=colors[idx % len(colors)],
+                    s=80,
+                    zorder=5
+                )
+                ax.annotate(
+                    f"${opt_price:,.2f}",
+                    (opt_price, opt_profit),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center",
+                    color=colors[idx % len(colors)],
+                    fontsize=9,
+                    fontweight="bold"
+                )
+
+            # BUNDLE CURVE
+            if result["bundle"]["enabled"]:
+
+                bundle_curve = result["bundle"]["profit_curve"]
 
                 ax.plot(
                     prices,
                     bundle_curve,
                     label="Bundle Profit",
-                    color=color_bundle,
-                    linewidth=2.5
+                    color="#FFFFFF",
+                    linewidth=2.5,
+                    linestyle="--"
                 )
-
-                # ==============================
-                # Pico Separate
-                # ==============================
-
-                sep_idx = np.argmax(separate_curve)
-                sep_price = prices[sep_idx]
-                sep_profit = separate_curve[sep_idx]
 
                 ax.scatter(
-                    sep_price,
-                    sep_profit,
-                    color=color_separate,
-                    s=90,
-                    zorder=5
+                    result["bundle"]["optimal_price"],
+                    result["bundle"]["optimal_profit"],
+                    color="#FFFFFF",
+                    s=100,
+                    zorder=6
                 )
-
                 ax.annotate(
-                    f"${sep_price:,.2f}",
-                    (sep_price, sep_profit),
+                    f"${result['bundle']['optimal_price']:,.2f}",
+                    (
+                        result["bundle"]["optimal_price"],
+                        result["bundle"]["optimal_profit"]
+                    ),
                     textcoords="offset points",
                     xytext=(0, 10),
-                    ha='center',
-                    color=color_separate,
+                    ha="center",
+                    color="#FFFFFF",
                     fontsize=9,
                     fontweight="bold"
                 )
+            ax.axhline(
+                0,
+                linestyle="--",
+                linewidth=1,
+                alpha=0.3,
+                color="white"
+            )
+            ax.set_xlabel("Price", color="white")
+            ax.set_ylabel("Profit", color="white")
+            ax.tick_params(colors="white")
 
-                # ==============================
-                # Pico Bundle
-                # ==============================
+            ax.yaxis.set_major_formatter(
+                FuncFormatter(lambda x, pos: f"${x:,.0f}")
+            )
 
-                bun_idx = np.argmax(bundle_curve)
-                bun_price = prices[bun_idx]
-                bun_profit = bundle_curve[bun_idx]
+            ax.xaxis.set_major_formatter(
+                FuncFormatter(lambda x, pos: f"${x:,.0f}")
+            )
 
-                ax.scatter(
-                    bun_price,
-                    bun_profit,
-                    color=color_bundle,
-                    s=90,
-                    zorder=5
-                )
+            ax.legend(
+                facecolor="#0E1117",
+                edgecolor="white",
+                labelcolor="white"
+            )
 
-                ax.annotate(
-                    f"${bun_price:,.2f}",
-                    (bun_price, bun_profit),
-                    textcoords="offset points",
-                    xytext=(0, 10),
-                    ha='center',
-                    color=color_bundle,
-                    fontsize=9,
-                    fontweight="bold"
-                )
+            ax.spines["bottom"].set_color("white")
+            ax.spines["left"].set_color("white")
 
-                # Linha vertical no bundle (mantemos para referência)
-                ax.axvline(
-                    bun_price,
-                    linestyle="--",
-                    alpha=0.4,
-                    color="#AAAAAA"
-                )
+            st.pyplot(fig, use_container_width=False)
 
-                # ==============================
-                # Estética consistente
-                # ==============================
+            friendly_regime = regime_map.get(regime, regime)
 
-                ax.set_xlabel("Price", color="white")
-                ax.set_ylabel("Profit", color="white")
-                ax.tick_params(colors="white")
-
-                ax.yaxis.set_major_formatter(
-                    FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                )
-
-                ax.xaxis.set_major_formatter(
-                    FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                )
-
-                ax.legend(
-                    facecolor="#0E1117",
-                    edgecolor="white",
-                    labelcolor="white"
-                )
-
-                ax.spines["bottom"].set_color("white")
-                ax.spines["left"].set_color("white")
-
-                st.pyplot(fig, use_container_width=False)
-
-
+            st.info(f"Regime: {friendly_regime}")
 # =====================================================
 # MODE 2 — DATA UPLOAD
 # =====================================================
@@ -274,7 +356,7 @@ if mode == "Upload Dataset (Econometric Estimation)":
 # TEMPLATE DOWNLOAD SECTION
 # =====================================================
 
-    st.markdown("## 📥 Download Data Template")
+    st.markdown("📄 Download Data Template")
 
     template_df = pd.DataFrame({
         "product_id": ["A", "A", "B", "B"],
@@ -299,7 +381,8 @@ if mode == "Upload Dataset (Econometric Estimation)":
         """
         **Required Columns Explanation:**
         
-        - `product_id`: Unique identifier for each product  
+        - `product_id`: Unique identifier for each product
+        - `product_name`: Unique description for each product 
         - `price`: Selling price  
         - `quantity`: Units sold  
         - `cac`: Customer acquisition cost  
@@ -313,7 +396,35 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
     if uploaded_file is not None:
 
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file, encoding="utf-8-sig")
+
+        # Normaliza nomes das colunas
+        df.columns = (
+            df.columns
+            .str.strip()
+            .str.lower()
+        )
+
+        # Colunas que precisam ser numéricas
+        numeric_cols = [
+            "price",
+            "quantity",
+            "cac",
+            "promotion_flag"
+        ]
+
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = (
+                    df[col]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False)  # corrige vírgula decimal
+                    .str.strip()
+                )
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # Remove linhas inválidas
+        df = df.dropna(subset=numeric_cols)
 
         required_cols = [
             "product_id",
@@ -329,298 +440,332 @@ if mode == "Upload Dataset (Econometric Estimation)":
             st.error("Dataset missing required columns.")
         else:
 
-            product_ids = df["product_id"].unique()
+            # Cria mapping ID -> Name
+            product_mapping = (
+                df[["product_id", "product_name"]]
+                .drop_duplicates()
+                .set_index("product_name")["product_id"]
+                .to_dict()
+            )
+            id_to_name = {v: k for k, v in product_mapping.items()}
+            product_names = list(product_mapping.keys())
 
-            st.markdown("## Product A Configuration")
+            st.markdown("## Product Selection")
 
-            product_A = st.selectbox(
-                "Select Product A",
-                product_ids
+            selected_product_names = st.multiselect(
+                "Select Products for Analysis",
+                options=product_names
             )
 
-            cost_A = st.number_input(
-                "Unit Cost (Cost to Produce 1 Unit)",
-                value=60.0,
-                key="cost_A"
-            )
+            # Converte nomes selecionados para IDs
+            selected_products = [
+                product_mapping[name] for name in selected_product_names
+            ]
 
-            st.markdown("---")
+            if len(selected_products) > 0:
 
-            st.markdown("## Product B Configuration")
+                st.markdown("---")
+                st.markdown("## Product Configuration")
 
-            product_B = st.selectbox(
-                "Select Product B",
-                product_ids
-            )
+                wtp_dict = {}
+                cost_dict = {}
+                market_size_dict = {}
 
-            cost_B = st.number_input(
-                "Unit Cost (Cost to Produce 1 Unit)",
-                value=50.0,
-                key="cost_B"
-            )
+                diagnostics = {}
 
-            if st.button("Run Econometric Structural Analysis"):
-
-                # ===== Fit Models =====
-                model_A = fit_structural_model(df, "product_id", product_A)
-                model_B = fit_structural_model(df, "product_id", product_B)
-
-                diag_A = elasticity_stat_diagnostics(model_A)
-                diag_B = elasticity_stat_diagnostics(model_B)
-
-                mean_A = df[df["product_id"] == product_A]["price"].mean()
-                mean_B = df[df["product_id"] == product_B]["price"].mean()
-
-                mu_A, sigma_A = calibrate_wtp_distribution(mean_A, diag_A["elasticity"])
-                mu_B, sigma_B = calibrate_wtp_distribution(mean_B, diag_B["elasticity"])
-
-                wtp_A = generate_calibrated_population(mu_A, sigma_A)
-                wtp_B = generate_calibrated_population(mu_B, sigma_B)
-
-                prices = np.linspace(50, 400, 200)
-
-                result = enterprise_market_strategy(
-                    wtp_A,
-                    wtp_B,
-                    cost_A,
-                    cost_B,
-                    prices
+                prices = np.linspace(
+                    df["price"].min() * 0.5,
+                    df["price"].max() * 1.5,
+                    200
                 )
 
-                # =====================================================
-                # ELASTICITY DIAGNOSTICS
-                # =====================================================
+                for product in selected_products:
 
-                st.markdown("## Elasticity Diagnostics")
+                    st.markdown(f"### {id_to_name.get(product, product)}")
 
-                dcol1, dcol2 = st.columns(2)
-
-                confidence_A = (1 - diag_A["p_value"]) * 100
-                confidence_B = (1 - diag_B["p_value"]) * 100
-
-                with dcol1:
-                    st.markdown("### Product A")
-
-                    st.metric(
-                        "Price Elasticity",
-                        f"{diag_A['elasticity']:.2f}"
+                    cost = st.number_input(
+                        "Unit Cost",
+                        value=50.0,
+                        key=f"cost_upload_{product}"
                     )
 
-                    st.metric(
-                        "Statistical Confidence",
-                        f"{confidence_A:.2f}%"
+                    tam_scale = st.selectbox(
+                        "Addressable Market Scale",
+                        ["Small Market (<50k)", "Medium Market (50k–500k)", "Large Market (500k+)"],
+                        key=f"tam_scale_{product}"
                     )
 
-                    st.metric(
-                        "Demand Sensitivity",
-                        diag_A["economic_regime"].capitalize()
-                    )
+                    if tam_scale == "Small Market (<50k)":
+                        tam = st.slider(
+                            "Addressable Market",
+                            min_value=1_000,
+                            max_value=50_000,
+                            value=10_000,
+                            step=1_000,
+                            key=f"tam_small_{product}"
+                        )
 
-                    # Insight interpretativo automático
-                    if abs(diag_A["elasticity"]) > 1:
-                        st.info("Demand is elastic — price changes strongly impact sales.")
+                    elif tam_scale == "Medium Market (50k–500k)":
+                        tam = st.slider(
+                            "Addressable Market",
+                            min_value=50_000,
+                            max_value=500_000,
+                            value=100_000,
+                            step=10_000,
+                            key=f"tam_medium_{product}"
+                        )
+
                     else:
-                        st.info("Demand is inelastic — price changes have limited impact.")
+                        tam = st.slider(
+                            "Addressable Market",
+                            min_value=500_000,
+                            max_value=10_000_000,
+                            value=1_000_000,
+                            step=100_000,
+                            key=f"tam_large_{product}"
+                        )
 
+                    st.caption(f"Selected TAM: {tam:,.0f} consumers")
 
-                with dcol2:
-                    st.markdown("### Product B")
+                    model = fit_structural_model(df, "product_id", product)
+                    diag = elasticity_stat_diagnostics(model)
 
-                    st.metric(
-                        "Price Elasticity",
-                        f"{diag_B['elasticity']:.2f}"
+                    diagnostics[product] = diag
+
+                    mean_price = df[df["product_id"] == product]["price"].mean()
+
+                    mu, sigma = calibrate_wtp_distribution(
+                        mean_price,
+                        diag["elasticity"]
                     )
 
-                    st.metric(
-                        "Statistical Confidence",
-                        f"{confidence_B:.2f}%"
+                    wtp = generate_calibrated_population(mu, sigma)
+
+                    wtp_dict[product] = wtp
+                    cost_dict[product] = cost
+                    market_size_dict[product] = tam
+
+                    st.markdown("---")
+
+                # ----------------------------
+                # BUNDLE
+                # ----------------------------
+
+                enable_bundle = st.checkbox("Enable Bundle Analysis")
+
+                bundle_products = None
+
+                if enable_bundle:
+
+                    bundle_names = st.multiselect(
+                        "Select Products for Bundle",
+                        options=selected_product_names  # apenas os já selecionados
                     )
 
-                    st.metric(
-                        "Demand Sensitivity",
-                        diag_B["economic_regime"].capitalize()
+                    bundle_products = [
+                        product_mapping[name]
+                        for name in bundle_names
+                    ]
+
+                # ----------------------------
+                # RUN ENGINE
+                # ----------------------------
+
+                if st.button("Run Econometric Structural Analysis"):
+
+                    result = enterprise_market_strategy(
+                        wtp_dict,
+                        cost_dict,
+                        prices,
+                        market_size_dict=market_size_dict,
+                        bundle_products=bundle_products
                     )
 
-                    if abs(diag_B["elasticity"]) > 1:
-                        st.info("Demand is elastic — price changes strongly impact sales.")
-                    else:
-                        st.info("Demand is inelastic — price changes have limited impact.")
+                    # =====================================================
+                    # ELASTICITY DIAGNOSTICS
+                    # =====================================================
 
-                # =====================================================
-                # STRATEGY RECOMMENDATION
-                # =====================================================
+                    st.markdown("## Elasticity Diagnostics")
 
-                col1, col2 = st.columns([1, 1.6])
+                    for product, diag in diagnostics.items():
 
-                # LEFT COLUMN
-                with col1:
+                        confidence = (1 - diag["p_value"]) * 100
 
-                    st.markdown(
-                        """
-                        <div style="
-                            max-width: 600px;
-                            margin-left: auto;
-                            margin-right: auto;
-                        ">
-                        """,
-                        unsafe_allow_html=True
-                    )
+                        st.markdown(f"### {id_to_name.get(product, product)}")
 
-                    st.markdown("<h2>Strategy Recommendation</h2>", unsafe_allow_html=True)
+                        c1, c2, c3 = st.columns(3)
 
-                    m1, m2 = st.columns(2)
-                    m3, m4 = st.columns(2)
-                    m5, m6 = st.columns(2)
+                        c1.metric("Elasticity", f"{diag['elasticity']:.2f}")
+                        c2.metric("Confidence", f"{confidence:.2f}%")
+                        c3.metric("Regime", diag["economic_regime"].capitalize())
 
-                    m1.metric("Optimal Price A", f"${result['optimal_A_price']:,.2f}")
-                    m2.metric("Optimal Price B", f"${result['optimal_B_price']:,.2f}")
+                        if abs(diag["elasticity"]) > 1:
+                            st.info("Demand is elastic — price changes strongly impact sales.")
+                        else:
+                            st.info("Demand is inelastic — price changes have limited impact.")
+                        st.markdown("---")
 
-                    m3.metric("Bundle Price", f"${result['bundle_price']:,.2f}")
-                    m4.metric("Separate Profit", f"${result['separate_profit']:,.2f}")
+                    # =====================================================
+                    # STRATEGY RECOMMENDATION
+                    # =====================================================
 
-                    m5.metric("Bundle Profit", f"${result['bundle_profit']:,.2f}")
-                    m6.metric("Incremental Gain", f"${result['incremental_gain']:,.2f}")
+                    col1, col2 = st.columns([1, 1.6])
 
-                    regime_map = {
-                        "bundle_dominates": "Bundle Dominates",
-                        "separate_dominates": "Separate Pricing Dominates",
-                        "indifferent": "Indifferent Strategy"
-                    }
+                    # LEFT COLUMN
+                    with col1:
 
-                    friendly_regime = regime_map.get(result["regime"], result["regime"])
+                        st.markdown("## Strategy Recommendation")
 
-                    if result["regime"] == "bundle_dominates":
-                        st.success(f"Regime: {friendly_regime}")
-                    elif result["regime"] == "separate_dominates":
+                        for product_id, data in result["individual"].items():
+
+                            product_name = id_to_name.get(product_id, product_id)
+
+                            st.markdown(f"### {product_name}")
+
+                            st.metric(
+                                "Optimal Price",
+                                f"${data['optimal_price']:,.2f}"
+                            )
+
+                            st.metric(
+                                "Optimal Profit",
+                                f"${data['optimal_profit']:,.2f}"
+                            )
+
+                            st.markdown("---")
+
+                        if result["bundle"]["enabled"]:
+
+                            st.markdown("### Bundle")
+
+                            st.metric(
+                                "Bundle Optimal Price",
+                                f"${result['bundle']['optimal_price']:,.2f}"
+                            )
+
+                            st.metric(
+                                "Bundle Profit",
+                                f"${result['bundle']['optimal_profit']:,.2f}"
+                            )
+
+                            st.metric(
+                                "Incremental Gain",
+                                f"${result['bundle']['incremental_gain']:,.2f}"
+                            )
+
+                    # RIGHT COLUMN — GRAPH
+                    with col2:
+
+                        fig, ax = plt.subplots(figsize=(8, 4.5))
+
+                        fig.patch.set_facecolor("#0E1117")
+                        ax.set_facecolor("#0E1117")
+
+                        colors = ["#4DA3FF", "#2ECC71", "#FF5733", "#9B59B6"]
+
+                        for i, (product_id, data) in enumerate(result["individual"].items()):
+                            product_name = id_to_name.get(product_id, product_id)
+                            curve = data["profit_curve"]
+                            color = colors[i % len(colors)]
+
+                            ax.plot(
+                                prices,
+                                curve,
+                                label=f"{product_name} Profit",
+                                color=color,
+                                linewidth=2.5
+                            )
+
+                            idx = np.argmax(curve)
+                            price_opt = prices[idx]
+                            profit_opt = curve[idx]
+
+                            ax.scatter(price_opt, profit_opt, color=color, s=90, zorder=5)
+
+                            ax.annotate(
+                                f"${price_opt:,.2f}",
+                                (price_opt, profit_opt),
+                                textcoords="offset points",
+                                xytext=(0, 10),
+                                ha='center',
+                                color=color,
+                                fontsize=9,
+                                fontweight="bold"
+                            )
+
+                        # Bundle curve
+                        if result["bundle"]["enabled"]:
+
+                            bundle_curve = result["bundle"]["profit_curve"]
+
+                            ax.plot(
+                                prices,
+                                bundle_curve,
+                                linestyle="--",
+                                linewidth=2.5,
+                                label="Bundle Profit",
+                                color="white"
+                            )
+
+                            idx = np.argmax(bundle_curve)
+                            price_opt = prices[idx]
+                            profit_opt = bundle_curve[idx]
+
+                            ax.scatter(price_opt, profit_opt, color="white", s=90, zorder=5)
+
+                            ax.annotate(
+                                f"${price_opt:,.2f}",
+                                (price_opt, profit_opt),
+                                textcoords="offset points",
+                                xytext=(0, 10),
+                                ha='center',
+                                color="white",
+                                fontsize=9,
+                                fontweight="bold"
+                            )
+
+                        ax.axhline(
+                            0,
+                            linestyle="--",
+                            alpha=0.3,
+                            color="#AAAAAA"
+                        )
+
+                        ax.set_xlabel("Price", color="white")
+                        ax.set_ylabel("Profit", color="white")
+                        ax.tick_params(colors="white")
+
+                        ax.yaxis.set_major_formatter(
+                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                        )
+
+                        ax.xaxis.set_major_formatter(
+                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                        )
+
+                        ax.legend(
+                            facecolor="#0E1117",
+                            edgecolor="white",
+                            labelcolor="white"
+                        )
+
+                        ax.spines["bottom"].set_color("white")
+                        ax.spines["left"].set_color("white")
+
+                        st.pyplot(fig, use_container_width=False)
+
+                    # ----------------------------
+                    # REGIME (Below Graph)
+                    # ----------------------------
+
+                        st.markdown("---")
+
+                        regime_map = {
+                            "bundle_dominates": "Bundle Dominates",
+                            "separate_dominates": "Separate Pricing Dominates",
+                            "single_product": "Single Product Analysis"
+                        }
+
+                        friendly_regime = regime_map.get(result["regime"], result["regime"])
+
                         st.info(f"Regime: {friendly_regime}")
-                    else:
-                        st.warning(f"Regime: {friendly_regime}")
-
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                # RIGHT COLUMN
-                with col2:
-
-                    # Container fixo para evitar expansão desproporcional
-                    st.markdown(
-                        """
-                        <div style="
-                            max-width: 750px;
-                            margin-left: auto;
-                            margin-right: auto;
-                        ">
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-                    st.markdown(
-                        "<h2 style='text-align: center;'>Profit Comparison</h2>",
-                        unsafe_allow_html=True
-                    )
-
-                    fig, ax = plt.subplots(figsize=(8, 4.5))
-
-                    fig.patch.set_facecolor("#0E1117")
-                    ax.set_facecolor("#0E1117")
-
-                    color_separate = "#4DA3FF"
-                    color_bundle = "#2ECC71"
-
-                    separate_curve = result["profit_separate_curve"]
-                    bundle_curve = result["profit_bundle_curve"]
-
-                    # Curvas
-                    ax.plot(
-                        prices,
-                        separate_curve,
-                        label="Separate Profit",
-                        color=color_separate,
-                        linewidth=2.5
-                    )
-
-                    ax.plot(
-                        prices,
-                        bundle_curve,
-                        label="Bundle Profit",
-                        color=color_bundle,
-                        linewidth=2.5
-                    )
-
-                    # Pico Separate
-                    sep_idx = np.argmax(separate_curve)
-                    sep_price = prices[sep_idx]
-                    sep_profit = separate_curve[sep_idx]
-
-                    ax.scatter(sep_price, sep_profit, color=color_separate, s=90, zorder=5)
-
-                    ax.annotate(
-                        f"${sep_price:,.2f}",
-                        (sep_price, sep_profit),
-                        textcoords="offset points",
-                        xytext=(0, 10),
-                        ha='center',
-                        color=color_separate,
-                        fontsize=9,
-                        fontweight="bold"
-                    )
-
-                    # Pico Bundle
-                    bun_idx = np.argmax(bundle_curve)
-                    bun_price = prices[bun_idx]
-                    bun_profit = bundle_curve[bun_idx]
-
-                    ax.scatter(bun_price, bun_profit, color=color_bundle, s=90, zorder=5)
-
-                    ax.annotate(
-                        f"${bun_price:,.2f}",
-                        (bun_price, bun_profit),
-                        textcoords="offset points",
-                        xytext=(0, 10),
-                        ha='center',
-                        color=color_bundle,
-                        fontsize=9,
-                        fontweight="bold"
-                    )
-
-                    # Linha vertical
-                    ax.axvline(
-                        bun_price,
-                        linestyle="--",
-                        alpha=0.4,
-                        color="#AAAAAA"
-                    )
-
-                    # # Estética
-                    # ax.set_title(
-                    #     "Profit Comparison",
-                    #     color="white",
-                    #     fontsize=14,
-                    #     fontweight="bold",
-                    #     pad=10
-                    # )
-
-                    ax.set_xlabel("Price", color="white")
-                    ax.set_ylabel("Profit", color="white")
-                    ax.tick_params(colors="white")
-
-                    ax.yaxis.set_major_formatter(
-                        FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                    )
-
-                    ax.xaxis.set_major_formatter(
-                        FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                    )
-
-                    ax.legend(
-                        facecolor="#0E1117",
-                        edgecolor="white",
-                        labelcolor="white"
-                    )
-
-                    ax.spines["bottom"].set_color("white")
-                    ax.spines["left"].set_color("white")
-
-                    st.pyplot(fig, use_container_width=False)
-
-                    # Fecha o div
-                    st.markdown("</div>", unsafe_allow_html=True)
