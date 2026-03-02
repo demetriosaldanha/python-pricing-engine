@@ -621,37 +621,38 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
                 if run_analysis:
 
-                    if enable_bundle and (not bundle_products or len(bundle_products) < 2):
-                        st.error("Bundle requires at least 2 selected products.")
-                    else:
+                    bundle_ids = None
 
-                        # Converte nomes do bundle para IDs
-                        bundle_ids = None
-                        if bundle_products:
-                            bundle_ids = [
-                                product_mapping[name]
-                                for name in bundle_products
-                            ]
+                    if enable_bundle:
+                        if not bundle_products or len(bundle_products) < 2:
+                            st.error("Bundle requires at least 2 selected products.")
+                            st.stop()
 
-                            with st.spinner("Running econometric structural analysis..."):
-                                try:
-                                    result = enterprise_market_strategy(
-                                        wtp_dict,
-                                        cost_dict,
-                                        prices,
-                                        market_size_dict=market_size_dict,
-                                        bundle_products=bundle_ids
-                                    )
+                        # converte nomes para IDs
+                        bundle_ids = [
+                            product_mapping[name]
+                            for name in bundle_products
+                        ]
 
-                                    st.session_state["analysis_result"] = result
+                    with st.spinner("Running econometric structural analysis..."):
+                        try:
+                            result = enterprise_market_strategy(
+                                wtp_dict,
+                                cost_dict,
+                                prices,
+                                market_size_dict=market_size_dict,
+                                bundle_products=bundle_ids  # None se não houver bundle
+                            )
 
-                                except Exception:
-                                    st.error("The dataset does not meet minimum econometric requirements.")
-                                    st.info(
-                                        "Ensure your dataset includes multiple time periods, "
-                                        "price variation, and sufficient observations per product."
-                                    )
-                                    st.stop()
+                            st.session_state["analysis_result"] = result
+
+                        except Exception:
+                            st.error("The dataset does not meet minimum econometric requirements.")
+                            st.info(
+                                "Ensure your dataset includes multiple time periods, "
+                                "price variation, and sufficient observations per product."
+                            )
+                            st.stop()
 
 
                 # ----------------------------
@@ -738,6 +739,8 @@ if mode == "Upload Dataset (Econometric Estimation)":
                     with col2:
 
                         fig, ax = plt.subplots(figsize=(8, 4.5))
+
+                        # Dark background
                         fig.patch.set_facecolor("#0E1117")
                         ax.set_facecolor("#0E1117")
 
@@ -757,6 +760,85 @@ if mode == "Upload Dataset (Econometric Estimation)":
                                 linewidth=2.5
                             )
 
+                            
+                            idx = np.argmax(curve)
+                            price_opt = prices[idx]
+                            profit_opt = curve[idx]
+
+                            ax.scatter(price_opt, profit_opt, color=color, s=90, zorder=5)
+
+                            ax.annotate(
+                                f"${price_opt:,.2f}",
+                                (price_opt, profit_opt),
+                                textcoords="offset points",
+                                xytext=(0, 10),
+                                ha="center",
+                                color=color,
+                                fontsize=9,
+                                fontweight="bold"
+                            )
+
+                        
+                        if result["bundle"]["enabled"]:
+
+                            bundle_curve = result["bundle"]["profit_curve"]
+
+                            ax.plot(
+                                prices,
+                                bundle_curve,
+                                linestyle="--",
+                                linewidth=2.5,
+                                label="Bundle Profit",
+                                color="white"
+                            )
+
+                            idx = np.argmax(bundle_curve)
+                            price_opt = prices[idx]
+                            profit_opt = bundle_curve[idx]
+
+                            ax.scatter(price_opt, profit_opt, color="white", s=90, zorder=5)
+
+                            ax.annotate(
+                                f"${price_opt:,.2f}",
+                                (price_opt, profit_opt),
+                                textcoords="offset points",
+                                xytext=(0, 10),
+                                ha="center",
+                                color="white",
+                                fontsize=9,
+                                fontweight="bold"
+                            )
+
+                        
+                        ax.axhline(
+                            0,
+                            linestyle="--",
+                            alpha=0.3,
+                            color="#AAAAAA"
+                        )
+
+                        
+                        ax.set_xlabel("Price", color="white")
+                        ax.set_ylabel("Profit", color="white")
+
+                        ax.tick_params(axis="x", colors="white")
+                        ax.tick_params(axis="y", colors="white")
+
+                        ax.spines["bottom"].set_color("white")
+                        ax.spines["left"].set_color("white")
+                        ax.spines["top"].set_color("#0E1117")
+                        ax.spines["right"].set_color("#0E1117")
+
+                       
+                        ax.yaxis.set_major_formatter(
+                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                        )
+
+                        ax.xaxis.set_major_formatter(
+                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
+                        )
+
+                        
                         ax.legend(
                             facecolor="#0E1117",
                             edgecolor="white",
@@ -765,18 +847,18 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
                         st.pyplot(fig, use_container_width=False)
 
-                    # ----------------------------
-                    # REGIME
-                    # ----------------------------
+                        # ----------------------------
+                        # REGIME
+                        # ----------------------------
 
-                    st.markdown("---")
+                        st.markdown("---")
 
-                    regime_map = {
-                        "bundle_dominates": "Bundle Dominates",
-                        "separate_dominates": "Separate Pricing Dominates",
-                        "single_product": "Single Product Analysis"
-                    }
+                        regime_map = {
+                            "bundle_dominates": "Bundle Dominates",
+                            "separate_dominates": "Separate Pricing Dominates",
+                            "single_product": "Single Product Analysis"
+                        }
 
-                    friendly_regime = regime_map.get(result["regime"], result["regime"])
+                        friendly_regime = regime_map.get(result["regime"], result["regime"])
 
-                    st.info(f"Regime: {friendly_regime}")
+                        st.info(f"Regime: {friendly_regime}")
