@@ -358,15 +358,43 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
     st.markdown("📄 Download Data Template")
 
-    template_df = pd.DataFrame({
-        "product_id": ["A", "A", "B", "B"],
-        "product_name": ["Product A", "Product A", "Product B", "Product B"],
-        "price": [150, 160, 180, 170],
-        "quantity": [100, 95, 80, 85],
-        "cac": [20, 22, 25, 24],
-        "promotion_flag": [0, 1, 0, 1],
-        "month": ["2024-01", "2024-02", "2024-01", "2024-02"]
-    })
+    import numpy as np
+
+    np.random.seed(42)
+
+    products = [
+        {"id": "SKU-101", "name": "Enterprise Analytics Suite", "base_price": 180},
+        {"id": "SKU-202", "name": "Advanced Reporting Module", "base_price": 140},
+        {"id": "SKU-303", "name": "Optimization Toolkit Pro", "base_price": 220},
+    ]
+
+    months = pd.date_range("2024-01-01", periods=12, freq="M")
+
+    rows = []
+
+    for product in products:
+        for month in months:
+
+            price_variation = np.random.normal(0, 10)
+            price = max(50, product["base_price"] + price_variation)
+
+            demand_shock = np.random.normal(0, 15)
+            quantity = max(
+                10,
+                int(300 - 1.2 * price + demand_shock)
+            )
+
+            rows.append({
+                "product_id": product["id"],
+                "product_name": product["name"],
+                "price": round(price, 2),
+                "quantity": quantity,
+                "cac": round(np.random.uniform(15, 30), 2),
+                "promotion_flag": np.random.choice([0, 1]),
+                "month": month.strftime("%Y-%m")
+            })
+
+    template_df = pd.DataFrame(rows)
 
     csv_template = template_df.to_csv(index=False).encode("utf-8")
 
@@ -527,8 +555,22 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
                     st.caption(f"Selected TAM: {tam:,.0f} consumers")
 
-                    model = fit_structural_model(df, "product_id", product)
-                    diag = elasticity_stat_diagnostics(model)
+                    try:
+                        model = fit_structural_model(df, "product_id", product)
+                        diag = elasticity_stat_diagnostics(model)
+
+                    except Exception as e:
+
+                        st.error(
+                            f"Unable to estimate structural model for {id_to_name.get(product, product)}."
+                        )
+
+                        st.info(
+                            "The uploaded dataset may not contain enough statistical variation "
+                            "or sufficient time periods to estimate demand elasticity."
+                        )
+
+                        st.stop()
 
                     diagnostics[product] = diag
 
@@ -548,38 +590,77 @@ if mode == "Upload Dataset (Econometric Estimation)":
                     st.markdown("---")
 
                 # ----------------------------
-                # BUNDLE
+                # BUNDLE SECTION (FORA DO LOOP)
                 # ----------------------------
 
-                enable_bundle = st.checkbox("Enable Bundle Analysis")
+                st.markdown("## Bundle Configuration")
 
                 bundle_products = None
 
-                if enable_bundle:
+                enable_bundle = st.checkbox("Enable Bundle Analysis")
 
-                    bundle_names = st.multiselect(
+                if enable_bundle:
+                    bundle_products = st.multiselect(
                         "Select Products for Bundle",
-                        options=selected_product_names  # apenas os já selecionados
+                        options=selected_product_names  # CORRIGIDO
                     )
 
-                    bundle_products = [
-                        product_mapping[name]
-                        for name in bundle_names
-                    ]
+                    if bundle_products and len(bundle_products) < 2:
+                        st.warning("Select at least 2 products for bundle analysis.")
+
+                st.markdown("---")
 
                 # ----------------------------
                 # RUN ENGINE
                 # ----------------------------
 
-                if st.button("Run Econometric Structural Analysis"):
+                run_analysis = st.button(
+                    "Run Econometric Structural Analysis",
+                    use_container_width=True
+                )
 
-                    result = enterprise_market_strategy(
-                        wtp_dict,
-                        cost_dict,
-                        prices,
-                        market_size_dict=market_size_dict,
-                        bundle_products=bundle_products
-                    )
+                if run_analysis:
+
+                    if enable_bundle and (not bundle_products or len(bundle_products) < 2):
+                        st.error("Bundle requires at least 2 selected products.")
+                    else:
+
+                        # Converte nomes do bundle para IDs
+                        bundle_ids = None
+                        if bundle_products:
+                            bundle_ids = [
+                                product_mapping[name]
+                                for name in bundle_products
+                            ]
+
+                            with st.spinner("Running econometric structural analysis..."):
+                                try:
+                                    result = enterprise_market_strategy(
+                                        wtp_dict,
+                                        cost_dict,
+                                        prices,
+                                        market_size_dict=market_size_dict,
+                                        bundle_products=bundle_ids
+                                    )
+
+                                    st.session_state["analysis_result"] = result
+
+                                except Exception:
+                                    st.error("The dataset does not meet minimum econometric requirements.")
+                                    st.info(
+                                        "Ensure your dataset includes multiple time periods, "
+                                        "price variation, and sufficient observations per product."
+                                    )
+                                    st.stop()
+
+
+                # ----------------------------
+                # RENDER RESULTS
+                # ----------------------------
+
+                if "analysis_result" in st.session_state:
+
+                    result = st.session_state["analysis_result"]
 
                     # =====================================================
                     # ELASTICITY DIAGNOSTICS
@@ -590,8 +671,9 @@ if mode == "Upload Dataset (Econometric Estimation)":
                     for product, diag in diagnostics.items():
 
                         confidence = (1 - diag["p_value"]) * 100
+                        product_name = id_to_name.get(product, product)
 
-                        st.markdown(f"### {id_to_name.get(product, product)}")
+                        st.markdown(f"### {product_name}")
 
                         c1, c2, c3 = st.columns(3)
 
@@ -603,6 +685,7 @@ if mode == "Upload Dataset (Econometric Estimation)":
                             st.info("Demand is elastic — price changes strongly impact sales.")
                         else:
                             st.info("Demand is inelastic — price changes have limited impact.")
+
                         st.markdown("---")
 
                     # =====================================================
@@ -611,7 +694,6 @@ if mode == "Upload Dataset (Econometric Estimation)":
 
                     col1, col2 = st.columns([1, 1.6])
 
-                    # LEFT COLUMN
                     with col1:
 
                         st.markdown("## Strategy Recommendation")
@@ -653,17 +735,16 @@ if mode == "Upload Dataset (Econometric Estimation)":
                                 f"${result['bundle']['incremental_gain']:,.2f}"
                             )
 
-                    # RIGHT COLUMN — GRAPH
                     with col2:
 
                         fig, ax = plt.subplots(figsize=(8, 4.5))
-
                         fig.patch.set_facecolor("#0E1117")
                         ax.set_facecolor("#0E1117")
 
                         colors = ["#4DA3FF", "#2ECC71", "#FF5733", "#9B59B6"]
 
                         for i, (product_id, data) in enumerate(result["individual"].items()):
+
                             product_name = id_to_name.get(product_id, product_id)
                             curve = data["profit_curve"]
                             color = colors[i % len(colors)]
@@ -676,96 +757,26 @@ if mode == "Upload Dataset (Econometric Estimation)":
                                 linewidth=2.5
                             )
 
-                            idx = np.argmax(curve)
-                            price_opt = prices[idx]
-                            profit_opt = curve[idx]
-
-                            ax.scatter(price_opt, profit_opt, color=color, s=90, zorder=5)
-
-                            ax.annotate(
-                                f"${price_opt:,.2f}",
-                                (price_opt, profit_opt),
-                                textcoords="offset points",
-                                xytext=(0, 10),
-                                ha='center',
-                                color=color,
-                                fontsize=9,
-                                fontweight="bold"
-                            )
-
-                        # Bundle curve
-                        if result["bundle"]["enabled"]:
-
-                            bundle_curve = result["bundle"]["profit_curve"]
-
-                            ax.plot(
-                                prices,
-                                bundle_curve,
-                                linestyle="--",
-                                linewidth=2.5,
-                                label="Bundle Profit",
-                                color="white"
-                            )
-
-                            idx = np.argmax(bundle_curve)
-                            price_opt = prices[idx]
-                            profit_opt = bundle_curve[idx]
-
-                            ax.scatter(price_opt, profit_opt, color="white", s=90, zorder=5)
-
-                            ax.annotate(
-                                f"${price_opt:,.2f}",
-                                (price_opt, profit_opt),
-                                textcoords="offset points",
-                                xytext=(0, 10),
-                                ha='center',
-                                color="white",
-                                fontsize=9,
-                                fontweight="bold"
-                            )
-
-                        ax.axhline(
-                            0,
-                            linestyle="--",
-                            alpha=0.3,
-                            color="#AAAAAA"
-                        )
-
-                        ax.set_xlabel("Price", color="white")
-                        ax.set_ylabel("Profit", color="white")
-                        ax.tick_params(colors="white")
-
-                        ax.yaxis.set_major_formatter(
-                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                        )
-
-                        ax.xaxis.set_major_formatter(
-                            FuncFormatter(lambda x, pos: f"${x:,.0f}")
-                        )
-
                         ax.legend(
                             facecolor="#0E1117",
                             edgecolor="white",
                             labelcolor="white"
                         )
 
-                        ax.spines["bottom"].set_color("white")
-                        ax.spines["left"].set_color("white")
-
                         st.pyplot(fig, use_container_width=False)
 
                     # ----------------------------
-                    # REGIME (Below Graph)
+                    # REGIME
                     # ----------------------------
 
-                        st.markdown("---")
+                    st.markdown("---")
 
-                        regime_map = {
-                            "bundle_dominates": "Bundle Dominates",
-                            "separate_dominates": "Separate Pricing Dominates",
-                            "single_product": "Single Product Analysis"
-                        }
+                    regime_map = {
+                        "bundle_dominates": "Bundle Dominates",
+                        "separate_dominates": "Separate Pricing Dominates",
+                        "single_product": "Single Product Analysis"
+                    }
 
-                        friendly_regime = regime_map.get(result["regime"], result["regime"])
+                    friendly_regime = regime_map.get(result["regime"], result["regime"])
 
-                        st.info(f"Regime: {friendly_regime}")
+                    st.info(f"Regime: {friendly_regime}")
